@@ -42,29 +42,36 @@ jobs:
           tree-sitter build --output "/tmp/ts-parsers/${LANG}.so" "$SRC"
 
       - name: Resolve inherited query dependencies
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           mkdir -p /tmp/ts-parsers /tmp/ts-queries
 
+          # Fetch files for a lang from its public GitHub repo — no auth needed
           fetch_lang() {
             local LANG="$1"
-            local REPO="neovim-treesitter/nvim-treesitter-queries-${LANG}"
+            local ORG="neovim-treesitter"
+            local REPO_NAME="nvim-treesitter-queries-${LANG}"
+            local RAW_BASE="https://raw.githubusercontent.com/${ORG}/${REPO_NAME}/main"
+            local API_BASE="https://api.github.com/repos/${ORG}/${REPO_NAME}"
 
             echo "==> Fetching dependency: $LANG"
-
-            # Download queries
             mkdir -p "/tmp/ts-queries/${LANG}"
-            gh api "repos/${REPO}/contents/queries" --jq '.[].name' 2>/dev/null \
-            | while read -r FNAME; do
-                gh api "repos/${REPO}/contents/queries/${FNAME}" --jq '.content' \
-                  | base64 -d > "/tmp/ts-queries/${LANG}/${FNAME}"
-              done
+
+            # List and download query files via unauthenticated API (public repos)
+            local FILES
+            FILES=$(curl -sfL "${API_BASE}/contents/queries" \
+              -H "Accept: application/vnd.github+json" \
+              | jq -r '.[].name' 2>/dev/null || true)
+
+            for FNAME in $FILES; do
+              curl -sfL "${RAW_BASE}/queries/${FNAME}" \
+                -o "/tmp/ts-queries/${LANG}/${FNAME}" || true
+            done
+            echo "  downloaded $(ls /tmp/ts-queries/${LANG}/ 2>/dev/null | wc -l) query files for ${LANG}"
 
             # Fetch parser.json and build parser
             local PJSON PURL PREF PLOC
-            PJSON=$(gh api "repos/${REPO}/contents/parser.json" --jq '.content' 2>/dev/null \
-              | base64 -d 2>/dev/null || echo '{}')
+            PJSON=$(curl -sfL "${RAW_BASE}/parser.json" 2>/dev/null || echo '{}')
             PURL=$(echo "$PJSON" | jq -r '.url // ""')
             PREF=$(echo "$PJSON" | jq -r '.min_version // "HEAD"')
             PLOC=$(echo "$PJSON" | jq -r '.location // ""')
