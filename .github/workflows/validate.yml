@@ -44,9 +44,11 @@ jobs:
       - name: Resolve inherited query dependencies
         shell: bash
         run: |
-          mkdir -p /tmp/ts-parsers /tmp/ts-queries
+          mkdir -p /tmp/ts-parsers query-deps
 
           # Fetch files for a lang from its public GitHub repo — no auth needed
+          # Query files go into deps/<lang>/ inside the workspace so ts_query_ls
+          # can discover them via language_retrieval_patterns.
           fetch_lang() {
             local LANG="$1"
             local ORG="neovim-treesitter"
@@ -55,7 +57,7 @@ jobs:
             local API_BASE="https://api.github.com/repos/${ORG}/${REPO_NAME}"
 
             echo "==> Fetching dependency: $LANG"
-            mkdir -p "/tmp/ts-queries/${LANG}"
+            mkdir -p "query-deps/${LANG}"
 
             # List and download query files via unauthenticated API (public repos)
             local FILES
@@ -65,9 +67,9 @@ jobs:
 
             for FNAME in $FILES; do
               curl -sfL "${RAW_BASE}/queries/${FNAME}" \
-                -o "/tmp/ts-queries/${LANG}/${FNAME}" || true
+                -o "query-deps/${LANG}/${FNAME}" || true
             done
-            echo "  downloaded $(ls /tmp/ts-queries/${LANG}/ 2>/dev/null | wc -l) query files for ${LANG}"
+            echo "  downloaded $(ls query-deps/${LANG}/ 2>/dev/null | wc -l) query files for ${LANG}"
 
             # Fetch parser.json and build parser
             local PJSON PURL PREF PLOC
@@ -103,7 +105,7 @@ jobs:
               fetch_lang "$DEP"
 
               # Discover next-level deps from the just-downloaded queries
-              NEW=$(grep -rh '^; inherits:' "/tmp/ts-queries/${DEP}/" 2>/dev/null \
+              NEW=$(grep -rh '^; inherits:' "query-deps/${DEP}/" 2>/dev/null \
                 | sed 's/; inherits: *//' | tr ',' '\n' | sed 's/?$//' \
                 | tr -d ' ' | sort -u | tr '\n' ' ' || true)
               NEXT_QUEUE="$NEXT_QUEUE $NEW"
@@ -119,7 +121,7 @@ jobs:
             "supported_abi_versions": { "start": 13, "end": 15 },
             "language_retrieval_patterns": [
               "nvim-treesitter-queries-([^/]+)/queries/[^/]+\\.scm$",
-              "/tmp/ts-queries/([^/]+)/[^/]+\\.scm$"
+              "query-deps/([^/]+)/[^/]+\\.scm$"
             ]
           }
           EOF
