@@ -34,9 +34,9 @@ jobs:
           LANG:     ${{ steps.manifest.outputs.lang }}
         run: |
           curl -sL "$URL/archive/$REF.tar.gz" -o parser.tar.gz
+          # Detect the actual extracted dir name from the archive (handles HEAD, branch names, semver)
+          SRC=$(tar -tf parser.tar.gz | head -1 | cut -d/ -f1)
           tar -xzf parser.tar.gz
-          REPO=$(basename "$URL")
-          SRC="${REPO}-${REF#v}"
           [ -n "$LOCATION" ] && SRC="$SRC/$LOCATION"
           mkdir -p /tmp/ts-parsers
           tree-sitter build --output "/tmp/ts-parsers/${LANG}.so" "$SRC"
