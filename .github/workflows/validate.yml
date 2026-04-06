@@ -35,11 +35,53 @@ jobs:
         run: |
           curl -sL "$URL/archive/$REF.tar.gz" -o parser.tar.gz
           # Detect the actual extracted dir name from the archive (handles HEAD, branch names, semver)
-          SRC=$(tar -tf parser.tar.gz | head -1 | cut -d/ -f1)
+          SRC=$(tar -tf parser.tar.gz 2>/dev/null | head -1 | cut -d/ -f1 || true)
           tar -xzf parser.tar.gz
           [ -n "$LOCATION" ] && SRC="$SRC/$LOCATION"
           mkdir -p /tmp/ts-parsers
           tree-sitter build --output "/tmp/ts-parsers/${LANG}.so" "$SRC"
+
+      - name: Resolve inherited query dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/ts-parsers /tmp/ts-queries
+
+          # Collect unique parent lang names from ; inherits: directives
+          PARENTS=$(grep -rh '^; inherits:' queries/*.scm 2>/dev/null \
+            | sed 's/; inherits: *//' | tr ',' '\n' | sed 's/?$//' \
+            | tr -d ' ' | sort -u || true)
+
+          for PARENT in $PARENTS; do
+            echo "==> Fetching parent: $PARENT"
+            PARENT_REPO="neovim-treesitter/nvim-treesitter-queries-${PARENT}"
+
+            # Fetch parent parser.json
+            PJSON=$(gh api "repos/${PARENT_REPO}/contents/parser.json" --jq '.content' 2>/dev/null \
+              | base64 -d 2>/dev/null || echo '{}')
+
+            PURL=$(echo "$PJSON"    | jq -r '.url // ""')
+            PREF=$(echo "$PJSON"    | jq -r '.min_version // "HEAD"')
+            PLOC=$(echo "$PJSON"    | jq -r '.location // ""')
+
+            # Build parent parser if URL is available
+            if [ -n "$PURL" ]; then
+              curl -sL "${PURL}/archive/${PREF}.tar.gz" -o "parent-${PARENT}.tar.gz"
+              PSRC=$(tar -tf "parent-${PARENT}.tar.gz" 2>/dev/null | head -1 | cut -d/ -f1 || true)
+              tar -xzf "parent-${PARENT}.tar.gz"
+              [ -n "$PLOC" ] && PSRC="$PSRC/$PLOC"
+              tree-sitter build --output "/tmp/ts-parsers/${PARENT}.so" "$PSRC" \
+                || echo "WARN: failed to build parser for $PARENT"
+            fi
+
+            # Clone parent queries
+            gh api "repos/${PARENT_REPO}/contents/queries" --jq '.[].name' 2>/dev/null \
+            | while read -r FNAME; do
+                mkdir -p "/tmp/ts-queries/${PARENT}"
+                gh api "repos/${PARENT_REPO}/contents/queries/${FNAME}" --jq '.content' \
+                  | base64 -d > "/tmp/ts-queries/${PARENT}/${FNAME}"
+              done
+          done
 
       - name: Write .tsqueryrc.json
         run: |
@@ -48,7 +90,8 @@ jobs:
             "parser_install_directories": ["/tmp/ts-parsers"],
             "supported_abi_versions": { "start": 13, "end": 15 },
             "language_retrieval_patterns": [
-              "nvim-treesitter-queries-([^/]+)/queries/[^/]+\\.scm$"
+              "nvim-treesitter-queries-([^/]+)/queries/[^/]+\\.scm$",
+              "ts-queries/([^/]+)/[^/]+\\.scm$"
             ]
           }
           EOF
