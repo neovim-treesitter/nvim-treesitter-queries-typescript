@@ -42,13 +42,14 @@ jobs:
           tree-sitter build --output "/tmp/ts-parsers/${LANG}.so" "$SRC"
 
       - name: Write .tsqueryrc.json
-        env:
-          LANG: ${{ steps.manifest.outputs.lang }}
         run: |
-          cat > .tsqueryrc.json <<EOF
+          cat > .tsqueryrc.json <<'EOF'
           {
             "parser_install_directories": ["/tmp/ts-parsers"],
-            "supported_abi_versions": { "start": 13, "end": 15 }
+            "supported_abi_versions": { "start": 13, "end": 15 },
+            "language_retrieval_patterns": [
+              "nvim-treesitter-queries-([^/]+)/queries/[^/]+\\.scm$"
+            ]
           }
           EOF
 
